@@ -3,7 +3,7 @@
 ## Package Overview
 
 **Name:** `@rmdes/indiekit-endpoint-auth`
-**Version:** 1.0.0-beta.26
+**Version:** 1.0.0-beta.27
 **Purpose:** IndieAuth authentication and authorization endpoint for Indiekit with profile scope support. Grants and verifies access tokens and authenticates users.
 
 This is a fork of `@indiekit/endpoint-auth` with custom auth fixes. It implements the IndieAuth specification for authentication and authorization, allowing users to sign in to their Indiekit instance and grant third-party applications access with scoped permissions.
@@ -214,6 +214,17 @@ Unsupported scopes are shown as disabled checkboxes in the consent form.
 
 - The `state` parameter is REQUIRED in authorization requests (per IndieAuth spec)
 - The endpoint validates its presence but does not verify its value (client responsibility)
+
+## Security Fixes (v1.0.0-beta.27)
+
+### Double next() Prevention in Secret Middleware
+
+**File:** `lib/middleware/secret.js`
+**Commit:** de7d8ca
+
+The `hasSecret` middleware called `next(error)` without `return`, allowing execution to continue past the error handler. In certain conditions, this could result in `next()` being called twice, which Express treats as a programming error and may cause unpredictable behavior.
+
+**Fix:** Changed `next(error)` to `return next(error)` — a one-line fix that ensures the middleware exits immediately after passing the error to Express.
 
 ## Commands
 
