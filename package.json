@@ -1,6 +1,6 @@
 {
   "name": "@rmdes/indiekit-endpoint-auth",
-  "version": "1.0.0-beta.29",
+  "version": "1.0.0-beta.30",
   "description": "IndieAuth authentication and authorization endpoint for Indiekit with profile scope support. Grants and verifies access tokens and authenticates users.",
   "keywords": [
     "indiekit",
@@ -40,7 +40,7 @@
     "url": "git+https://github.com/rmdes/indiekit-endpoint-auth.git"
   },
   "dependencies": {
-    "@indiekit/error": "^1.0.0-beta.25",
+    "@indiekit/error": "^1.0.0-beta.27",
     "@indiekit/util": "^1.0.0-beta.25",
     "bcrypt": "^6.0.0",
     "express": "^5.0.0",
