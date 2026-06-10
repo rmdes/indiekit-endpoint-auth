@@ -3,7 +3,7 @@
 ## Package Overview
 
 **Name:** `@rmdes/indiekit-endpoint-auth`
-**Version:** 1.0.0-beta.27
+**Version:** see package.json
 **Purpose:** IndieAuth authentication and authorization endpoint for Indiekit with profile scope support. Grants and verifies access tokens and authenticates users.
 
 This is a fork of `@indiekit/endpoint-auth` with custom auth fixes. It implements the IndieAuth specification for authentication and authorization, allowing users to sign in to their Indiekit instance and grant third-party applications access with scoped permissions.
