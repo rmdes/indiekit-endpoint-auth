@@ -1,263 +1,161 @@
 import { strict as assert } from "node:assert";
-import { before, beforeEach, describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 
-import { MockAgent, setGlobalDispatcher } from "undici";
+import { validateRedirect } from "../../lib/redirect.js";
 
-import {
-  _clearRedirectCache,
-  validateRedirect,
-} from "../../lib/redirect.js";
+// Deliberately free of undici and `@indiekit-test/*`: the mock agent helpers
+// live in the upstream monorepo and are unavailable here, and pinning undici's
+// MockAgent behaviour proved brittle across versions. Stubbing `fetch` keeps
+// these runnable from a clean checkout.
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
 
 /**
- * Set up an undici MockAgent for cross-host fetch tests. Each test that
- * needs network access reaches into `agent` to intercept the next request.
+ * Serve a client_id page declaring the given redirect URIs
+ * @param {string[]} declared - Declared redirect URIs
+ * @param {object} [headers] - Response headers
  */
-let agent;
-before(() => {
-  agent = new MockAgent();
-  agent.disableNetConnect();
-  setGlobalDispatcher(agent);
-});
+const servePage = (declared, headers = {}) => {
+  const links = declared
+    .map((uri) => `<link rel="redirect_uri" href="${uri}">`)
+    .join("");
+  globalThis.fetch = async () =>
+    new Response(
+      `<html><head>${links}</head><body><p>Client</p></body></html>`,
+      { status: 200, headers },
+    );
+};
 
-beforeEach(() => {
-  _clearRedirectCache();
-});
+const CLIENT = "https://client.example/";
 
 describe("endpoint-auth/lib/redirect", () => {
   it("Allows same-host redirect URIs without fetching", async () => {
-    // No mock intercept registered — would throw if fetch were attempted.
+    globalThis.fetch = async () => {
+      throw new Error("should not fetch for a same-host redirect");
+    };
+
     assert.equal(
-      await validateRedirect(
-        "https://client.example:3000/cb",
-        "https://client.example:3000/redirect",
-      ),
+      await validateRedirect("https://client.example/callback", CLIENT),
       true,
     );
   });
 
-  it("Rejects different ports as different hosts (no declared URIs)", async () => {
-    agent
-      .get("https://client.example:8080")
-      .intercept({ path: "/redirect" })
-      .reply(200, "<html></html>");
+  it("Rejects a different host or port when nothing is declared", async () => {
+    servePage([]);
 
     assert.equal(
-      await validateRedirect(
-        "https://client.example:3000/cb",
-        "https://client.example:8080/redirect",
-      ),
+      await validateRedirect("https://other.example/callback", CLIENT),
+      false,
+    );
+    assert.equal(
+      await validateRedirect("https://client.example:8080/", CLIENT),
       false,
     );
   });
 
-  it("Rejects www vs apex hosts when no declared URIs", async () => {
-    agent
-      .get("https://www.client.example")
-      .intercept({ path: "/redirect" })
-      .reply(200, "<html></html>");
+  it("Allows a redirect URI declared in a <link> tag", async () => {
+    servePage(["https://redirect.example/callback"]);
 
     assert.equal(
-      await validateRedirect(
-        "https://client.example/cb",
-        "https://www.client.example/redirect",
-      ),
-      false,
-    );
-  });
-
-  it("Allows cross-host redirect when declared via <link rel=redirect_uri>", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<!doctype html><html><head>
-          <link rel="redirect_uri" href="https://abcdef.chromiumapp.org/">
-        </head></html>`,
-      );
-
-    assert.equal(
-      await validateRedirect(
-        "https://abcdef.chromiumapp.org/",
-        "https://rmdes.github.io/plume/",
-      ),
+      await validateRedirect("https://redirect.example/callback", CLIENT),
       true,
     );
   });
 
-  it("Allows cross-host redirect when declared via Link HTTP header", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(200, "<html></html>", {
+  it("Allows a redirect URI declared in a Link header", async () => {
+    globalThis.fetch = async () =>
+      new Response("<html><head></head><body><p>Client</p></body></html>", {
+        status: 200,
         headers: {
-          link: '<https://ext.example/cb>; rel="redirect_uri"',
+          link: '<https://redirect.example/callback>; rel="redirect_uri"',
         },
       });
 
     assert.equal(
-      await validateRedirect(
-        "https://ext.example/cb",
-        "https://rmdes.github.io/plume/",
-      ),
+      await validateRedirect("https://redirect.example/callback", CLIENT),
       true,
     );
   });
 
-  it("Allows wildcard subdomain pattern matching one DNS label", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="https://*.chromiumapp.org/">`,
-      );
+  it("Resolves a relative declared href against the client_id", async () => {
+    servePage(["/callback"]);
 
     assert.equal(
-      await validateRedirect(
-        "https://abc.chromiumapp.org/",
-        "https://rmdes.github.io/plume/",
-      ),
+      await validateRedirect("https://client.example/callback", CLIENT),
       true,
     );
   });
 
-  it("Rejects wildcard pattern when request has too many subdomain labels", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="https://*.chromiumapp.org/">`,
-      );
+  it("Rejects a declared URI with a different path or scheme", async () => {
+    servePage(["https://redirect.example/callback"]);
 
     assert.equal(
-      await validateRedirect(
-        "https://a.b.chromiumapp.org/",
-        "https://rmdes.github.io/plume/",
-      ),
+      await validateRedirect("https://redirect.example/elsewhere", CLIENT),
+      false,
+    );
+    assert.equal(
+      await validateRedirect("http://redirect.example/callback", CLIENT),
       false,
     );
   });
 
-  it("Rejects wildcard pattern when request has the apex (no subdomain)", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="https://*.chromiumapp.org/">`,
-      );
+  it("Matches a declared pattern literally, never as a wildcard", async () => {
+    // Wildcards in redirect URLs open up attack vectors, so a declared `*.` is
+    // compared as text. See indieweb/indieauth#22 (comment 544204967)
+    servePage(["https://*.extension.example/"]);
 
+    for (const redirectUri of [
+      "https://abc123.extension.example/",
+      "https://extension.example/",
+      "https://a.b.extension.example/",
+    ]) {
+      assert.equal(await validateRedirect(redirectUri, CLIENT), false);
+    }
+  });
+
+  it("Rejects when the client_id cannot be fetched", async () => {
+    globalThis.fetch = async () => new Response("", { status: 404 });
     assert.equal(
-      await validateRedirect(
-        "https://chromiumapp.org/",
-        "https://rmdes.github.io/plume/",
-      ),
+      await validateRedirect("https://redirect.example/callback", CLIENT),
+      false,
+    );
+
+    globalThis.fetch = async () => {
+      throw new TypeError("fetch failed");
+    };
+    assert.equal(
+      await validateRedirect("https://redirect.example/callback", CLIENT),
       false,
     );
   });
 
-  it("Rejects when declared URI path does not match", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="https://ext.example/cb">`,
-      );
-
-    assert.equal(
-      await validateRedirect(
-        "https://ext.example/different",
-        "https://rmdes.github.io/plume/",
-      ),
-      false,
-    );
+  it("Returns false for invalid URLs without throwing", async () => {
+    assert.equal(await validateRedirect("foo", CLIENT), false);
+    assert.equal(await validateRedirect(CLIENT, "bar"), false);
   });
 
-  it("Rejects when declared URI scheme does not match", async () => {
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="http://ext.example/cb">`,
-      );
+  it("Accepts Plume's browser extension callbacks", async () => {
+    // Both are literal: Chrome derives its host from the extension id, Firefox
+    // from sha1(browser_specific_settings.gecko.id). Guards this server against
+    // regressing the flow its own browser extension depends on.
+    const plume = "https://rmdes.github.io/plume/";
+    const chrome = "https://hcphdjeoolimpjjekegpobkhoealiige.chromiumapp.org/";
+    const firefox =
+      "https://18c46e9c3ea19e2ce2f904ee4b4228ff5e5d9abb.extensions.allizom.org/";
 
+    servePage([chrome, firefox]);
+
+    assert.equal(await validateRedirect(chrome, plume), true);
+    assert.equal(await validateRedirect(firefox, plume), true);
     assert.equal(
       await validateRedirect(
-        "https://ext.example/cb",
-        "https://rmdes.github.io/plume/",
+        "https://someone-elses-extension.chromiumapp.org/",
+        plume,
       ),
       false,
-    );
-  });
-
-  it("Rejects cross-host when no declared redirect_uri tags or headers", async () => {
-    agent
-      .get("https://client.example")
-      .intercept({ path: "/" })
-      .reply(200, "<html><head><title>no links</title></head></html>");
-
-    assert.equal(
-      await validateRedirect(
-        "https://other.example/cb",
-        "https://client.example/",
-      ),
-      false,
-    );
-  });
-
-  it("Returns false when client_id fetch fails (non-2xx)", async () => {
-    agent
-      .get("https://client.example")
-      .intercept({ path: "/" })
-      .reply(404, "");
-
-    assert.equal(
-      await validateRedirect(
-        "https://other.example/cb",
-        "https://client.example/",
-      ),
-      false,
-    );
-  });
-
-  it("Returns false on invalid URLs without throwing", async () => {
-    assert.equal(await validateRedirect("not a url", "https://x/"), false);
-    assert.equal(
-      await validateRedirect("https://x/", "also not a url"),
-      false,
-    );
-  });
-
-  it("Caches declared redirect URIs across calls", async () => {
-    // Only register one intercept; second call should not re-fetch.
-    agent
-      .get("https://rmdes.github.io")
-      .intercept({ path: "/plume/" })
-      .reply(
-        200,
-        `<link rel="redirect_uri" href="https://ext.example/cb">`,
-      )
-      .times(1);
-
-    assert.equal(
-      await validateRedirect(
-        "https://ext.example/cb",
-        "https://rmdes.github.io/plume/",
-      ),
-      true,
-    );
-
-    // Second call hits cache; no fetch, no intercept needed.
-    assert.equal(
-      await validateRedirect(
-        "https://ext.example/cb",
-        "https://rmdes.github.io/plume/",
-      ),
-      true,
     );
   });
 });
