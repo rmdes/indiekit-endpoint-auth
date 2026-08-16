@@ -18,7 +18,10 @@ afterEach(() => {
  * @param {string} [body] - Response body to serve
  * @returns {Promise<{fetched: boolean, client: object}>} Result
  */
-const discover = async (clientId, body = "<html><head></head><body><p>x</p></body></html>") => {
+const discover = async (
+  clientId,
+  body = "<html><head></head><body><p>x</p></body></html>",
+) => {
   let fetched = false;
   globalThis.fetch = async () => {
     fetched = true;
@@ -30,20 +33,26 @@ const discover = async (clientId, body = "<html><head></head><body><p>x</p></bod
 };
 
 describe("endpoint-auth/lib/client fetchable origins", () => {
-  it("Fetches public HTTP(S) clients", async () => {
+  it("Fetches clients identified by a domain name", async () => {
     for (const clientId of [
       "https://client.example/",
       "https://abc.de/",
       "http://client.example:3000/",
-      "https://8.8.8.8/",
+      "https://sub.domain.client.example/path",
     ]) {
       const { fetched } = await discover(clientId);
       assert.equal(fetched, true, `expected ${clientId} to be fetched`);
     }
   });
 
-  it("Refuses loopback, private and link-local addresses", async () => {
+  it("Refuses every IP literal, not only internal ones", async () => {
+    // A client identifier host name must be a domain name; IP addresses are
+    // not permitted except loopback, which must not be fetched. So none of
+    // these is a valid client_id and none is worth fetching.
     for (const clientId of [
+      "https://8.8.8.8/",
+      "https://1.1.1.1/",
+      "https://[2606:4700::1111]/",
       "http://localhost:3000/",
       "http://127.0.0.1/",
       "http://[::1]/",
