@@ -108,8 +108,11 @@ All tokens are JWTs signed with the `SECRET` environment variable.
 - `mute`, `block` — Manage blocked feeds
 - `channels` — Create and manage feed channels
 
+**Supported IndieAuth scopes:**
+- `profile` — Return the user's profile (name, photo, URL) with the token and from `/userinfo`
+
 **Unsupported scopes** (shown as disabled in consent form):
-- `email`, `profile` — IndieAuth profile scopes
+- `email`
 
 ## PKCE Support
 
